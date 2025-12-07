@@ -16,7 +16,13 @@ return {
       source = opts.body and ltn12.source.string(opts.body) or nil
     })
     if not ok then
-      return done(false, { status = 0, headers = {}, body = status })
+      local e = status
+      return done(false, {
+        status = 0,
+        headers = {},
+        ok = false,
+        body = function (cb) return cb(false, e) end
+      })
     end
     local body = arr.concat(chunks)
     if headers then
@@ -27,8 +33,10 @@ return {
     return done(status >= 200 and status < 300, {
       status = status,
       headers = headers or {},
-      body = body,
-      ok = status >= 200 and status < 300
+      ok = status >= 200 and status < 300,
+      body = function (cb)
+        return cb(true, body)
+      end
     })
   end,
   sleep = function (ms, fn)
