@@ -5,8 +5,8 @@ local env = {
   public = true,
   dependencies = {
     "lua == 5.1",
-    "santoku >= 0.0.304-1",
-    "santoku-system >= 0.0.58-1",
+    "santoku >= 0.0.310-1",
+    "santoku-system >= 0.0.61-1",
     "luasocket >= 3.1.0-1",
   },
 }
