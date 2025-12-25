@@ -5,7 +5,7 @@ local arr = require("santoku.array")
 local str = require("santoku.string")
 
 return {
-  fetch = function (url, opts, done)
+  fetch = function (url, opts)
     opts = opts or {}
     local chunks = {}
     local ok, status, headers = pcall(http.request, {
@@ -16,13 +16,14 @@ return {
       source = opts.body and ltn12.source.string(opts.body) or nil
     })
     if not ok then
-      local e = status
-      return done(false, {
+      local err = status
+      return false, {
         status = 0,
         headers = {},
         ok = false,
-        body = function (cb) return cb(false, e) end
-      })
+        error = err,
+        body = function () return nil end
+      }
     end
     local body = arr.concat(chunks)
     if headers then
@@ -30,17 +31,16 @@ return {
       for k, v in pairs(headers) do h[str.lower(k)] = v end
       headers = h
     end
-    return done(status >= 200 and status < 300, {
+    return status >= 200 and status < 300, {
       status = status,
       headers = headers or {},
       ok = status >= 200 and status < 300,
-      body = function (cb)
-        return cb(true, body)
+      body = function ()
+        return body
       end
-    })
+    }
   end,
-  sleep = function (ms, fn)
+  sleep = function (ms)
     sys.sleep(ms / 1000)
-    return fn()
   end
 }
