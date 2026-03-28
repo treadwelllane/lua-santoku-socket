@@ -1,4 +1,4 @@
-local http = require("socket.http")
+local https = require("ssl.https")
 local ltn12 = require("ltn12")
 local sys = require("santoku.system")
 local arr = require("santoku.array")
@@ -7,10 +7,14 @@ local str = require("santoku.string")
 local function do_fetch (url, opts)
   opts = opts or {}
   local chunks = {}
-  local ok, status, headers = pcall(http.request, {
+  local hdrs = opts.headers or {}
+  if opts.body then
+    hdrs["content-length"] = hdrs["content-length"] or tostring(#opts.body)
+  end
+  local ok, status, headers = pcall(https.request, {
     url = url,
     method = opts.method or "GET",
-    headers = opts.headers,
+    headers = hdrs,
     sink = ltn12.sink.table(chunks),
     source = opts.body and ltn12.source.string(opts.body) or nil
   })
