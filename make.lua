@@ -1,6 +1,6 @@
 local env = {
   name = "santoku-socket",
-  version = "0.0.8-1",
+  version = "0.0.9-1",
   license = "MIT",
   public = true,
   dependencies = {
@@ -8,6 +8,7 @@ local env = {
     "santoku >= 0.0.328-1",
     "santoku-system >= 0.0.63-1",
     "luasocket >= 3.1.0-1",
+    "luasec >= 1.3.2-1",
   },
 }
 

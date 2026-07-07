@@ -11,7 +11,7 @@ local function do_fetch (url, opts)
   if opts.body then
     hdrs["content-length"] = hdrs["content-length"] or tostring(#opts.body)
   end
-  local ok, status, headers = pcall(https.request, {
+  local ok, one, code, rheaders = pcall(https.request, {
     url = url,
     method = opts.method or "GET",
     headers = hdrs,
@@ -19,25 +19,33 @@ local function do_fetch (url, opts)
     source = opts.body and ltn12.source.string(opts.body) or nil
   })
   if not ok then
-    local err = status
     return false, {
       status = 0,
       headers = {},
       ok = false,
-      error = err,
+      error = one,
+      body = function () return nil end
+    }
+  end
+  if one == nil then
+    return false, {
+      status = 0,
+      headers = {},
+      ok = false,
+      error = code,
       body = function () return nil end
     }
   end
   local body = arr.concat(chunks)
-  if headers then
-    local h = {}
-    for k, v in pairs(headers) do h[str.lower(k)] = v end
-    headers = h
+  local headers = {}
+  if rheaders then
+    for k, v in pairs(rheaders) do headers[str.lower(k)] = v end
   end
-  return status >= 200 and status < 300, {
-    status = status,
-    headers = headers or {},
-    ok = status >= 200 and status < 300,
+  local is2xx = code >= 200 and code < 300
+  return is2xx, {
+    status = code,
+    headers = headers,
+    ok = is2xx,
     body = function () return body end
   }
 end
