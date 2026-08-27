@@ -1,47 +1,3 @@
-<p align="center">
-  <img src="https://santoku.dev/logo-santoku-socket.png" height="64" alt="santoku-socket">
-</p>
-
-# santoku-socket
-
-An HTTP(S) client. Wraps luasec and ltn12 in a small request and response shape, with a
-cancelable async handle and a millisecond `sleep`. A non-2xx status comes back as a
-result, not an error.
-
-## Install
-
-```sh
-luarocks install santoku-socket
-```
-
-## Example
-
-```lua
-local socket = require("santoku.socket")
-
-local ok, resp = socket.fetch("https://example.com/")
-
-if ok then
-  print(resp.status, resp.body())
-end
-```
-
-## Documentation
-
-Runnable examples and the full API: [santoku.dev](https://santoku.dev/#santoku-socket).
-
-## Tests
-
-The tests are the spec. For the exhaustive surface, read them:
-[`test/spec/santoku/socket.lua`](test/spec/santoku/socket.lua).
-
-## License
-
-MIT, see [LICENSE](LICENSE).
-
-## More examples
-
-```lua
 local test = require("santoku.test")
 
 local err = require("santoku.error")
@@ -101,4 +57,3 @@ test("a request can be canceled before it is issued", function ()
   assert(eq(true, resp.canceled))
   assert(eq(0, served.calls))
 end)
-```
