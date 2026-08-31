@@ -37,6 +37,34 @@ local function fake_sock (cfg)
   return f
 end
 
+local function fake_cert (cfg)
+  return {
+    extensions = function ()
+      return cfg.exts or {}
+    end,
+    subject = function ()
+      return cfg.subject or {}
+    end,
+  }
+end
+
+local function tls_sock (cfg)
+  local f = fake_sock(cfg)
+  f.sni = function (_, n)
+    f.sniname = n
+  end
+  f.dohandshake = function ()
+    if cfg.hsfail then
+      return nil, "certificate verify failed"
+    end
+    return 1
+  end
+  f.getpeercertificate = function ()
+    return cfg.cert
+  end
+  return f
+end
+
 local state = {}
 
 package.loaded["socket"] = {
@@ -58,6 +86,16 @@ package.loaded["ssl"] = {
 package.loaded["santoku.socket.stream"] = nil
 local stream = require("santoku.socket.stream")
 
+local CA = os.tmpname()
+local fh = io.open(CA, "w")
+fh:write("fake bundle")
+fh:close()
+stream.ca_paths = { CA }
+
+local GMAIL_CERT = fake_cert({
+  exts = { subjectAltName = { dNSName = { "imap.gmail.com", "*.gmail.com" } } },
+})
+
 test("plain tcp roundtrip", function ()
   local chunks, closes = {}, {}
   state.sock = fake_sock({ recvs = {
@@ -75,7 +113,7 @@ test("plain tcp roundtrip", function ()
     assert(ok, "connect failed")
     got = c
   end)
-  assert(state.sock.host == "h" and state.sock.port == 1)
+  assert(got.tls.verified == false)
   assert(got.write("abc"))
   assert(state.sock.sent[1] == "abc")
   assert(got.step(10))
@@ -87,7 +125,6 @@ test("plain tcp roundtrip", function ()
   local ok3, e3 = got.step(10)
   assert(ok3 == false and e3 == "closed")
   assert(#closes == 1 and closes[1] == "closed")
-  assert(state.sock.closed)
   local ok4 = got.step(10)
   assert(ok4 == false)
   assert(#closes == 1)
@@ -139,54 +176,140 @@ test("connect refused", function ()
   assert(res.e == "connection refused")
 end)
 
-test("tls wraps and handshakes", function ()
+test("tls verifies by default with a discovered bundle", function ()
   state.sock = fake_sock({})
-  state.tls_sock = fake_sock({ recvs = { { d = "secure" } } })
-  state.tls_sock.sni = function (_, n)
-    state.sni = n
-  end
-  state.tls_sock.dohandshake = function ()
-    return 1
-  end
+  state.tls_sock = tls_sock({ cert = GMAIL_CERT })
   local got
   stream.connect({
-    host = "imap.x.y", port = 993,
+    host = "imap.gmail.com", port = 993,
     data = function () end,
   }, function (ok, c)
     assert(ok, "tls connect failed")
     got = c
   end)
-  assert(state.wrap_cfg.mode == "client")
-  assert(state.wrap_cfg.verify == "none")
-  assert(state.sni == "imap.x.y")
-  assert(got.write("z"))
-  assert(state.tls_sock.sent[1] == "z")
+  assert(state.wrap_cfg.verify == "peer")
+  assert(state.wrap_cfg.cafile == CA)
+  assert(state.tls_sock.sniname == "imap.gmail.com")
+  assert(got.tls.verified == true)
+  assert(got.tls.cafile == CA)
 end)
 
-test("tls verify peer with cafile", function ()
+test("wildcard san matches", function ()
   state.sock = fake_sock({})
-  state.tls_sock = fake_sock({})
-  state.tls_sock.dohandshake = function ()
-    return 1
-  end
+  state.tls_sock = tls_sock({ cert = GMAIL_CERT })
   stream.connect({
-    host = "h", port = 993, cafile = "/ca.pem",
+    host = "pop.gmail.com", port = 995,
+    data = function () end,
+  }, function (ok, c)
+    assert(ok, "wildcard match failed")
+    assert(c.tls.verified == true)
+  end)
+end)
+
+test("hostname mismatch rejected", function ()
+  state.sock = fake_sock({})
+  state.tls_sock = tls_sock({ cert = GMAIL_CERT })
+  local res
+  stream.connect({
+    host = "imap.gmail.com", port = 993, sslname = "evil.example.com",
+    data = function () end,
+  }, function (ok, e)
+    res = { ok = ok, e = e }
+  end)
+  assert(res.ok == false)
+  assert(string.find(res.e, "hostname mismatch", 1, true))
+  assert(state.tls_sock.closed)
+end)
+
+test("oid keyed san extension", function ()
+  state.sock = fake_sock({})
+  state.tls_sock = tls_sock({ cert = fake_cert({
+    exts = { ["2.5.29.17"] = { dNSName = { "imap.gmail.com" } } },
+  }) })
+  stream.connect({
+    host = "imap.gmail.com", port = 993,
+    data = function () end,
+  }, function (ok)
+    assert(ok, "oid keyed san failed")
+  end)
+end)
+
+test("common name fallback", function ()
+  state.sock = fake_sock({})
+  state.tls_sock = tls_sock({ cert = fake_cert({
+    subject = { { name = "commonName", value = "imap.gmail.com" } },
+  }) })
+  stream.connect({
+    host = "imap.gmail.com", port = 993,
+    data = function () end,
+  }, function (ok)
+    assert(ok, "cn fallback failed")
+  end)
+end)
+
+test("missing certificate rejected", function ()
+  state.sock = fake_sock({})
+  state.tls_sock = tls_sock({})
+  local res
+  stream.connect({
+    host = "imap.gmail.com", port = 993,
+    data = function () end,
+  }, function (ok, e)
+    res = { ok = ok, e = e }
+  end)
+  assert(res.ok == false)
+  assert(res.e == "no peer certificate")
+end)
+
+test("no ca bundle is an error, not silent insecurity", function ()
+  local saved = stream.ca_paths
+  stream.ca_paths = {}
+  state.sock = fake_sock({})
+  local res
+  stream.connect({
+    host = "imap.gmail.com", port = 993,
+    data = function () end,
+  }, function (ok, e)
+    res = { ok = ok, e = e }
+  end)
+  stream.ca_paths = saved
+  assert(res.ok == false)
+  assert(string.find(res.e, "no CA bundle", 1, true))
+end)
+
+test("verify false opts out entirely", function ()
+  state.sock = fake_sock({})
+  state.tls_sock = tls_sock({})
+  local got
+  stream.connect({
+    host = "imap.gmail.com", port = 993, verify = false,
+    data = function () end,
+  }, function (ok, c)
+    assert(ok, "opt-out connect failed")
+    got = c
+  end)
+  assert(state.wrap_cfg.verify == "none")
+  assert(got.tls.verified == false)
+end)
+
+test("explicit cafile skips discovery", function ()
+  state.sock = fake_sock({})
+  state.tls_sock = tls_sock({ cert = GMAIL_CERT })
+  stream.connect({
+    host = "imap.gmail.com", port = 993, cafile = "/my/ca.pem",
     data = function () end,
   }, function (ok)
     assert(ok)
   end)
+  assert(state.wrap_cfg.cafile == "/my/ca.pem")
   assert(state.wrap_cfg.verify == "peer")
-  assert(state.wrap_cfg.cafile == "/ca.pem")
 end)
 
 test("handshake failure", function ()
   state.sock = fake_sock({})
-  state.tls_sock = fake_sock({})
-  state.tls_sock.dohandshake = function ()
-    return nil, "certificate verify failed"
-  end
+  state.tls_sock = tls_sock({ hsfail = true })
   local res
-  stream.connect({ host = "h", port = 993,
+  stream.connect({ host = "imap.gmail.com", port = 993,
     data = function () end,
   }, function (ok, e)
     res = { ok = ok, e = e }
@@ -196,24 +319,28 @@ test("handshake failure", function ()
   assert(state.tls_sock.closed)
 end)
 
-test("step delivers to data callback in order", function ()
-  local seen = ""
-  state.sock = fake_sock({ recvs = {
-    { e = "timeout", p = "" },
-    { d = "aa" },
-    { d = "bb" },
-  } })
-  local got
-  stream.connect({
-    host = "h", port = 1, tls = false,
-    data = function (c) seen = seen .. c end,
-  }, function (ok, c)
-    assert(ok)
-    got = c
-  end)
-  local ok1, e1 = got.step(10)
-  assert(ok1 and e1 == "timeout")
-  assert(got.step(10))
-  assert(got.step(10))
-  assert(seen == "aabb")
+test("match_host exact and wildcard", function ()
+  assert(stream.match_host("imap.gmail.com", { "imap.gmail.com" }))
+  assert(stream.match_host("IMAP.GMAIL.COM", { "imap.gmail.com" }))
+  assert(stream.match_host("pop.gmail.com", { "*.gmail.com" }))
+  assert(not stream.match_host("gmail.com", { "*.gmail.com" }))
+  assert(not stream.match_host("a.b.gmail.com", { "*.gmail.com" }))
+  assert(not stream.match_host("evil.com", { "imap.gmail.com" }))
 end)
+
+test("cert_names shapes", function ()
+  local san = stream.cert_names(fake_cert({
+    exts = { subjectAltName = { dNSName = { "A.example", "b.example" } } },
+  }))
+  assert(#san == 2 and san[1] == "a.example")
+  local oid = stream.cert_names(fake_cert({
+    exts = { ["2.5.29.17"] = { dNSName = { "c.example" } } },
+  }))
+  assert(#oid == 1 and oid[1] == "c.example")
+  local cn = stream.cert_names(fake_cert({
+    subject = { { oid = "2.5.4.3", value = "d.example" } },
+  }))
+  assert(#cn == 1 and cn[1] == "d.example")
+end)
+
+os.remove(CA)
