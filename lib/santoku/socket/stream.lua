@@ -1,5 +1,8 @@
 local socket = require("socket")
 local ssl = require("ssl")
+local str = require("santoku.string")
+local arr = require("santoku.array")
+local fs = require("santoku.fs")
 
 local M = {}
 
@@ -12,9 +15,7 @@ M.ca_paths = {
 
 local function find_ca ()
   for i = 1, #M.ca_paths do
-    local fh = io.open(M.ca_paths[i], "r")
-    if fh then
-      fh:close()
+    if fs.exists(M.ca_paths[i]) then
       return M.ca_paths[i]
     end
   end
@@ -31,7 +32,7 @@ local function cert_names (cert)
         if type(d) == "table" then
           for i = 1, #d do
             if type(d[i]) == "string" then
-              out[#out + 1] = string.lower(d[i])
+              out[#out + 1] = str.lower(d[i])
             end
           end
         end
@@ -45,7 +46,7 @@ local function cert_names (cert)
         local e = subj[i]
         if type(e) == "table" and e.value
           and (e.name == "commonName" or e.oid == "2.5.4.3") then
-          out[#out + 1] = string.lower(e.value)
+          out[#out + 1] = str.lower(e.value)
         end
       end
     end
@@ -54,14 +55,14 @@ local function cert_names (cert)
 end
 
 local function match_host (host, names)
-  host = string.lower(host)
+  host = str.lower(host)
   for i = 1, #names do
     local n = names[i]
     if n == host then
       return true
     end
-    local suffix = string.match(n, "^%*%.(.+)$")
-    if suffix and string.match(host, "^[^.]+%.(.+)$") == suffix then
+    local suffix = str.match(n, "^%*%.(.+)$")
+    if suffix and str.match(host, "^[^.]+%.(.+)$") == suffix then
       return true
     end
   end
@@ -128,7 +129,7 @@ M.connect = function (opts, done)
       if not match_host(target, names) then
         wrapped:close()
         return done(false, "hostname mismatch: certificate is for "
-          .. (#names > 0 and table.concat(names, ", ") or "(no names found)")
+          .. (#names > 0 and arr.concat(names, ", ") or "(no names found)")
           .. ", not " .. target)
       end
       tls.verified = true

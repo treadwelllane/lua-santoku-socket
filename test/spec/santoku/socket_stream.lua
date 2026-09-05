@@ -1,4 +1,7 @@
 local test = require("santoku.test")
+local str = require("santoku.string")
+local arr = require("santoku.array")
+local fs = require("santoku.fs")
 local err = require("santoku.error")
 local assert = err.assert
 
@@ -16,11 +19,11 @@ local function fake_sock (cfg)
   end
   f.send = function (_, d, i)
     f.sends = f.sends + 1
-    local s = cfg.sendscript and table.remove(cfg.sendscript, 1)
+    local s = cfg.sendscript and select(2, arr.shift(cfg.sendscript))
     if s then
       return nil, s.e, s.np
     end
-    f.sent[#f.sent + 1] = string.sub(d, i or 1)
+    f.sent[#f.sent + 1] = str.sub(d, i or 1)
     return #d
   end
   f.receive = function ()
@@ -86,10 +89,8 @@ package.loaded["ssl"] = {
 package.loaded["santoku.socket.stream"] = nil
 local stream = require("santoku.socket.stream")
 
-local CA = os.tmpname()
-local fh = io.open(CA, "w")
-fh:write("fake bundle")
-fh:close()
+local CA = fs.tmpname()
+fs.writefile(CA, "fake bundle")
 stream.ca_paths = { CA }
 
 local GMAIL_CERT = fake_cert({
@@ -217,7 +218,7 @@ test("hostname mismatch rejected", function ()
     res = { ok = ok, e = e }
   end)
   assert(res.ok == false)
-  assert(string.find(res.e, "hostname mismatch", 1, true))
+  assert(str.find(res.e, "hostname mismatch", 1, true))
   assert(state.tls_sock.closed)
 end)
 
@@ -274,7 +275,7 @@ test("no ca bundle is an error, not silent insecurity", function ()
   end)
   stream.ca_paths = saved
   assert(res.ok == false)
-  assert(string.find(res.e, "no CA bundle", 1, true))
+  assert(str.find(res.e, "no CA bundle", 1, true))
 end)
 
 test("verify false opts out entirely", function ()
@@ -343,4 +344,4 @@ test("cert_names shapes", function ()
   assert(#cn == 1 and cn[1] == "d.example")
 end)
 
-os.remove(CA)
+fs.rm(CA, true)
